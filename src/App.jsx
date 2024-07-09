@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import './App.css'
 import Banner from './components/Banner/Banner'
 import BookDisplay from './components/BookDisplay/BookDisplay'
@@ -7,14 +7,12 @@ import axios from 'axios'
 import { setCacheKey, setCacheKeyValue } from './utils/setCache'
 import { checkCache, getCacheValue } from './utils/getCache'
 
-
 function App() {
-
   const [bookName, setBookName] = useState('')
   const [loading, setLoading] = useState(false)
   const [books, setBooks] = useState([])
   const [page, setPage] = useState(1)
-
+  const cancelTokenRef = useRef(null) 
 
   useEffect(() => {
     if (!bookName) {
@@ -25,39 +23,56 @@ function App() {
 
     setLoading(true)
 
-    if(checkCache(bookName)) {
+    if (checkCache(bookName)) {
       const cacheValue = getCacheValue(bookName)
-      cacheValue !== null ?  setBooks(cacheValue) : ""
+      if (cacheValue !== null) {
+        setBooks(cacheValue)
+      }
       setLoading(false)
       return
-    } 
+    }
 
     const delayDebounceFn = setTimeout(() => {
-      fetchBooks(bookName)
+      fetchBooks(bookName, 1)
     }, 1000)
-    setPage(1)
 
-    return () => clearTimeout(delayDebounceFn)
+    return () => {
+      clearTimeout(delayDebounceFn)
+      if (cancelTokenRef.current) {
+        cancelTokenRef.current.cancel('Operation canceled due to new request.')
+      }
+    }
   }, [bookName])
 
   useEffect(() => {
-    setLoading(true)
-    fetchBooks(bookName)
-    setLoading(true)
+    if (bookName) {
+      setLoading(true)
+      fetchBooks(bookName, page)
+    }
   }, [page])
 
-  const fetchBooks = async (query) => {
+  const fetchBooks = async (query, page) => {
     try {
-      const response = await axios.get(`https://www.googleapis.com/books/v1/volumes?q=${query}&maxResults=5&startIndex=${page - 1}`)
+      if (cancelTokenRef.current) {
+        cancelTokenRef.current.cancel('Operation canceled due to new request.')
+      }
+      cancelTokenRef.current = axios.CancelToken.source()
+
+      const response = await axios.get(`https://www.googleapis.com/books/v1/volumes?q=${query}&maxResults=5&startIndex=${(page - 1) * 5}`, {
+        cancelToken: cancelTokenRef.current.token,
+      })
       setBooks(response.data.items || [])
-      setCacheKey(bookName)
-      setCacheKeyValue(bookName , response.data.items)
+      setCacheKey(query)
+      setCacheKeyValue(query, response.data.items)
     } catch (error) {
-      console.error('Error fetching books:', error)
+      if (axios.isCancel(error)) {
+        console.log('Request canceled:', error.message)
+      } else {
+        console.error('Error fetching books:', error)
+      }
     }
     setLoading(false)
   }
-
 
   return (
     <>
